@@ -1,61 +1,79 @@
-import logging
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from bot.database import Database
+from bot.localisation import Localisation
+from bot import (
+    UPDATES_CHANNEL,
+    DATABASE_URL,
+    SESSION_NAME
+)
+from pyrogram.types import ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant, UsernameNotOccupied, ChatAdminRequired, PeerIdInvalid
 
-import pyrogram
-from config import Config 
-from pyrogram import Client, Filters, InlineKeyboardButton, InlineKeyboardMarkup
-from translation import Translation
-from Tools.Download import download
+db = Database(DATABASE_URL, SESSION_NAME)
+CURRENT_PROCESSES = {}
+CHAT_FLOOD = {}
+broadcast_ids = {}
 
-my_father = "https://t.me/{}".format(Config.USER_NAME[1:])
-support = "https://telegram.dog/Ns_Bot_supporters"
-@Client.on_message(Filters.command(["start"]))
-async def start(c, m):
-
-    await c.send_message(chat_id=m.chat.id,
-                         text=Translation.START.format(m.from_user.first_name, Config.USER_NAME),
-                         reply_to_message_id=m.message_id,
-                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("My Father 👨‍💻", url=my_father), InlineKeyboardButton("📌Support channel", url=support)]]))
-    logger.info(f"{m.from_user.first_name} used start command")
-
-
-
-@Client.on_message(Filters.command(["help"]))
-async def help(c, m):
-
-    await c.send_message(chat_id=m.chat.id,
-                         text=Translation.HELP,
-                         reply_to_message_id=m.message_id,
-                         parse_mode="markdown")
+async def new_join_f(client, message):
+    # delete all other messages, except for AUTH_USERS
+    await message.delete(revoke=True)
+    # reply the correct CHAT ID,
+    # and LEAVE the chat
+    chat_type = message.chat.type
+    if chat_type != "private":
+        await message.reply_text(
+            Localisation.WRONG_MESSAGE.format(
+                CHAT_ID=message.chat.id
+            )
+        )
+        # leave chat
+        await message.chat.leave()
 
 
-@Client.on_message(Filters.command(["about"]))
-async def about(c, m):
-
-    await c.send_message(chat_id=m.chat.id,
-                         text=Translation.ABOUT,
-                         disable_web_page_preview=True,
-                         reply_to_message_id=m.message_id,
-                         parse_mode="markdown")
-
-@Client.on_message(Filters.command(["converttovideo"]))
-async def video(c, m):
-  if m.from_user.id in Config.BANNED_USER:
-      await c.send_message(chat_id=m.chat.id, text=Translation.BANNED_TEXT)
-  if m.from_user.id not in Config.BANNED_USER:
-    if m.reply_to_message is not None:
-      await download(c, m)
-    else:
-       await c.send_message(chat_id=m.chat.id, text=Translation.REPLY_TEXT)
-
-@Client.on_message(Filters.command(["converttofile"]))
-async def file(c, m):
-  if m.from_user.id in Config.BANNED_USER:
-      await c.send_message(chat_id=m.chat.id, text=Translation.BANNED_TEXT)
-  if m.from_user.id not in Config.BANNED_USER:
-    if m.reply_to_message is not None:
-      await download(c, m)
-    else:
-       await c.send_message(chat_id=m.chat.id, text=Translation.REPLY_TEXT)
+async def help_message_f(client, message):
+    if not await db.is_user_exist(message.chat.id):
+        await db.add_user(message.chat.id)
+    ## Force Sub ##
+    update_channel = UPDATES_CHANNEL
+    if update_channel:
+        try:
+            user = await client.get_chat_member(update_channel, message.chat.id)
+            if user.status == "kicked":
+               await message.reply_text(
+                   text="Sorry Sir, You are Banned to use me. Contact my [Support Group](https://t.me/VKP_BOTS).",
+                   parse_mode="markdown",
+                   disable_web_page_preview=True
+               )
+               return
+        except UserNotParticipant:
+            await message.reply_text(
+                text="**Please Join My Updates Channel to use this Bot!**",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton("Join Updates Channel", url=f"https://t.me/{update_channel}")
+                        ]
+                    ]
+                ),
+                parse_mode="markdown"
+            )
+            return
+        except Exception:
+            await message.reply_text(
+                text="Something went Wrong. Contact my [Support Group](https://t.me/VKP_BOTS).",
+                parse_mode="markdown",
+                disable_web_page_preview=True
+            )
+            return
+    ## Force Sub ##
+    await message.reply_text(
+        Localisation.HELP_MESSAGE,
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton('⚙ Help', callback_data="help"),
+                    InlineKeyboardButton('🔔Channel', url='https://t.me/VKPROJECTS'),
+                ]
+            ]
+        ),
+        quote=True
+    )
